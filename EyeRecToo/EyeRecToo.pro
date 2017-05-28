@@ -33,7 +33,9 @@ SOURCES +=\
     $${TOP}/src/gaze-estimation/Homography.cpp \
     $${TOP}/src/DataRecorder.cpp \
     $${TOP}/src/NetworkStream.cpp \
-    $${TOP}/src/Reference.cpp
+    $${TOP}/src/Reference.cpp \
+    src/pupil-detection/algorithms/cannyedgedetectioncpu.cpp \
+    src/pupil-detection/algorithms/cannyedgedetectiongpu.cpp
 
 HEADERS  += \
     $${TOP}/src/MainWindow.h\
@@ -56,7 +58,10 @@ HEADERS  += \
     $${TOP}/src/gaze-estimation/Homography.h \
     $${TOP}/src/DataRecorder.h \
     $${TOP}/src/NetworkStream.h \
-    $${TOP}/src/Reference.h
+    $${TOP}/src/Reference.h \
+    src/pupil-detection/algorithms/cannyedgedetectioncpu.h \
+    src/pupil-detection/algorithms/cannyedgedetection.h \
+    src/pupil-detection/algorithms/cannyedgedetectiongpu.h
 
 FORMS    += \
     $${TOP}/src/MainWindow.ui \

@@ -1251,9 +1251,6 @@ static void optimize_pos(cv::Mat *pic, double area, cv::Point *pos){
 static cv::RotatedRect runexcuse(cv::Mat *pic, cv::Mat *pic_th, cv::Mat *th_edges, int good_ellipse_threshold) {
     cv::normalize(*pic, *pic, 0, 255, cv::NORM_MINMAX, CV_8U); //Make sure every value is between 0 and 255
 
-    CannyEdgeDetectorSelector selector;
-
-
     double border=0.1;
     int peek_detector_factor=10;
     int bright_region_th=199;
@@ -1291,8 +1288,8 @@ static cv::RotatedRect runexcuse(cv::Mat *pic, cv::Mat *pic_th, cv::Mat *th_edge
             picpic.data[(picpic.cols*j)+i]=pic->data[(pic->cols*(start_y+j))+(start_x+i)];
         }
 
-    selector.setAlgorithmType(CannyEdgeDetectorSelector.CPU, &picpic);
-    cv::Mat detected_edges2 = selector.execute();
+
+    cv::Mat detected_edges2 = canny_impl(&picpic);
 
     cv::Mat detected_edges = cv::Mat::zeros(pic->rows, pic->cols, CV_8U);
     for(int i=0; i<detected_edges2.cols; i++) {
