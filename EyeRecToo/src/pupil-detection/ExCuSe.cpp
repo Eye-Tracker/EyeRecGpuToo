@@ -8,156 +8,120 @@ std::string ExCuSe::desc = "ExCuSe (Fuhl et al. 2015)";
 
 #define MAX_LINE 10000
 
-static void matlab_bwselect(cv::Mat *strong,cv::Mat *weak,cv::Mat *check){
-
+/**
+ * @brief perform the hysteresis tracing
+ * @param strong a non maximum suppression array of the canny edge algorithm with the high threshold set and applied
+ * @param weak a non maximum suppression array of the canny edge algorithm
+ * @param check
+ */
+static void matlab_bwselect(cv::Mat *strong, cv::Mat *weak, cv::Mat *check) {
     int pic_x=strong->cols;
     int pic_y=strong->rows;
 
     int lines[MAX_LINE];
-    int lines_idx=0;
+    int lines_idx = 0;
 
+    int idx = 0;
 
-    int idx=0;
+    for(int i = 1; i < pic_y - 1; i++){
+        for(int j = 1; j < pic_x - 1; j++){
 
-    for(int i=1;i<pic_y-1;i++){
+            //If the Non Maximum Suppression array with high thresholding isn't 0 and
+            //our output check array isn't filled before
+            if(strong->data[idx + j] != 0 && check->data[idx + j] == 0) {
+                check->data[idx + j] = 255; //Mark the check array
 
-        for(int j=1;j<pic_x-1;j++){
+                lines_idx = 1;
+                lines[0] = idx + j;
 
-            if(strong->data[idx+j]!=0 && check->data[idx+j]==0){
+                int cur_idx = 0;
+                while(cur_idx < lines_idx && lines_idx < MAX_LINE-1) {
+                    int cur_pos = lines[cur_idx];
 
-                check->data[idx+j]=255;
-                lines_idx=1;
-                lines[0]=idx+j;
+                    //Check the neighbors of the current pixel
+                    if(cur_pos - pic_x - 1 >= 0 && cur_pos + pic_x + 1 < pic_x * pic_y) { //Check if within borders
+                        for(int k1 = -1; k1 < 2; k1++) {
+                            for(int k2 = -1; k2 < 2; k2++) {
+                                //Check if check array isn't filled and if the non maximum suppression array is set
+                                if(check->data[(cur_pos + (k1 * pic_x)) + k2] == 0 && weak->data[(cur_pos + (k1 * pic_x)) + k2] != 0) {
+                                    check->data[(cur_pos + (k1 * pic_x)) + k2] = 255; //Mark the check array at the position
 
-
-                int akt_idx=0;
-
-                while(akt_idx<lines_idx && lines_idx<MAX_LINE-1){
-
-                    int akt_pos=lines[akt_idx];
-
-                    if(akt_pos-pic_x-1>=0 && akt_pos+pic_x+1<pic_x*pic_y){
-                    for(int k1=-1;k1<2;k1++)
-                        for(int k2=-1;k2<2;k2++){
-
-
-                            if(check->data[(akt_pos+(k1*pic_x))+k2]==0 && weak->data[(akt_pos+(k1*pic_x))+k2]!=0){
-
-                                check->data[(akt_pos+(k1*pic_x))+k2]=255;
-
-                                lines_idx++;
-                                lines[lines_idx-1]=(akt_pos+(k1*pic_x))+k2;
+                                    lines_idx++;
+                                    lines[lines_idx - 1] = (cur_pos + (k1 * pic_x)) + k2;
+                                }
                             }
-
+                        }
                     }
-                    }
-                    akt_idx++;
-
+                    cur_idx++;
                 }
-
-
-
-
-
             }
 
         }
 
-    idx+=pic_x;
+        idx += pic_x;
     }
-
 }
 
+// swap with GPU Impl
+// Found this paper: http://www.umiacs.umd.edu/~ramani/pubs/luo_gpu_canny_fin_2008.pdf
+
+//Explanation for implementation found here: https://rosettacode.org/wiki/Canny_edge_detector
+/**
+ * @brief A canny edge implementation on the cpu
+ * @param pic the image to process
+ * @return the canny edge detected image
+ */
 static cv::Mat canny_impl(cv::Mat *pic){
     int k_sz=16;
-
-
+    //Used for noise reduction by applying a gaussian filter
     float gau[16] = {0.000000220358050f,0.000007297256405f,0.000146569312970f,0.001785579770079f,
-                        0.013193749090229f,0.059130281094460f,0.160732768610747f,0.265003534507060f,0.265003534507060f,
-                        0.160732768610747f,0.059130281094460f,0.013193749090229f,0.001785579770079f,0.000146569312970f,
-                        0.000007297256405f,0.000000220358050f};
+                     0.013193749090229f,0.059130281094460f,0.160732768610747f,0.265003534507060f,0.265003534507060f,
+                     0.160732768610747f,0.059130281094460f,0.013193749090229f,0.001785579770079f,0.000146569312970f,
+                     0.000007297256405f,0.000000220358050f};
     float deriv_gau[16] = {-0.000026704586264f,-0.000276122963398f,-0.003355163265098f,-0.024616683775044f,-0.108194751875585f,
-                                -0.278368310241814f,-0.388430056419619f,-0.196732206873178f,0.196732206873178f,0.388430056419619f,
-                                0.278368310241814f,0.108194751875585f,0.024616683775044f,0.003355163265098f,0.000276122963398f,0.000026704586264f};
-
-
-
-
+                           -0.278368310241814f,-0.388430056419619f,-0.196732206873178f,0.196732206873178f,0.388430056419619f,
+                           0.278368310241814f,0.108194751875585f,0.024616683775044f,0.003355163265098f,0.000276122963398f,0.000026704586264f};
 
     cv::Point anchor = cv::Point( -1, -1 );
     float delta = 0;
     int ddepth = -1;
 
-
     pic->convertTo(*pic, CV_32FC1);
-
 
     cv::Mat gau_x = cv::Mat(1, k_sz, CV_32FC1,&gau);
     cv::Mat deriv_gau_x = cv::Mat(1, k_sz, CV_32FC1,&deriv_gau);
 
+    cv::Mat g_x;
+    cv::Mat g_y;
 
-
-
-
-
-
-
-
-    cv::Mat res_x;
-    cv::Mat res_y;
-
-
-
-
+    //Apply the gaussian
     cv::transpose(*pic,*pic);
-    filter2D(*pic, res_x, ddepth , gau_x, anchor, delta, cv::BORDER_REPLICATE );
+    //Apply gaussian with derivation twice for x and y direction respectively
+    filter2D(*pic, g_x, ddepth , gau_x, anchor, delta, cv::BORDER_REPLICATE );
     cv::transpose(*pic,*pic);
-    cv::transpose(res_x,res_x);
+    cv::transpose(g_x,g_x);
+    filter2D(g_x, g_x, ddepth , deriv_gau_x, anchor, delta, cv::BORDER_REPLICATE );
 
+    filter2D(*pic, g_y, ddepth , gau_x, anchor, delta, cv::BORDER_REPLICATE );
+    cv::transpose(g_y,g_y);
+    filter2D(g_y, g_y, ddepth , deriv_gau_x, anchor, delta, cv::BORDER_REPLICATE );
+    cv::transpose(g_y,g_y);
 
-    filter2D(res_x, res_x, ddepth , deriv_gau_x, anchor, delta, cv::BORDER_REPLICATE );
-
-
-
-    filter2D(*pic, res_y, ddepth , gau_x, anchor, delta, cv::BORDER_REPLICATE );
-
-
-    cv::transpose(res_y,res_y);
-    filter2D(res_y, res_y, ddepth , deriv_gau_x, anchor, delta, cv::BORDER_REPLICATE );
-    cv::transpose(res_y,res_y);
-
-
-
-
-
-
-
+    //Compute the intensity gradient. Hypot is defined as sqrt(x^2+y^2)
+    //Fast calucation possible by convolotion with sobel operator (see https://rosettacode.org/wiki/Canny_edge_detector)
     cv::Mat res=cv::Mat::zeros(pic->rows, pic->cols, CV_32FC1);
-
-
-
-
-    float * p_res, *p_x, *p_y;
+    float * g, *p_x, *p_y;
     for(int i=0; i<res.rows; i++){
-        p_res=res.ptr<float>(i);
-        p_x=res_x.ptr<float>(i);
-        p_y=res_y.ptr<float>(i);
+        g=res.ptr<float>(i);
+        p_x=g_x.ptr<float>(i);
+        p_y=g_y.ptr<float>(i);
 
         for(int j=0; j<res.cols; j++){
-            //res.at<float>(j, i)= sqrt( (res_x.at<float>(j, i)*res_x.at<float>(j, i)) + (res_y.at<float>(j, i)*res_y.at<float>(j, i)) );
-            //res.at<float>(j, i)=robust_pytagoras_after_MOLAR_MORRIS(res_x.at<float>(j, i), res_y.at<float>(j, i));
-            //res.at<float>(j, i)=hypot(res_x.at<float>(j, i), res_y.at<float>(j, i));
-
-            //p_res[j]=__ieee754_hypot(p_x[j], p_y[j]);
-
-            p_res[j]=hypot(p_x[j], p_y[j]);
+            g[j]=hypot(p_x[j], p_y[j]);
         }
     }
 
-
-
-    //th selection
-
+    //Calculate the threshold value
     int PercentOfPixelsNotEdges=0.7 * res.cols * res.rows;
     float ThresholdRatio=0.4f;
 
@@ -168,9 +132,7 @@ static cv::Mat canny_impl(cv::Mat *pic){
     int hist[64];
     for(int i=0; i<h_sz; i++) hist[i]=0;
 
-
     cv::normalize(res, res, 0, 1, cv::NORM_MINMAX, CV_32FC1);
-
 
     cv::Mat res_idx=cv::Mat::zeros(pic->rows, pic->cols, CV_8U);
     cv::normalize(res, res_idx, 0, 63, cv::NORM_MINMAX, CV_32S);
@@ -180,9 +142,7 @@ static cv::Mat canny_impl(cv::Mat *pic){
         p_res_idx=res_idx.ptr<int>(i);
         for(int j=0; j<res.cols; j++){
             hist[p_res_idx[j]]++;
-    }}
-
-
+        }}
 
     int sum=0;
     for(int i=0; i<h_sz; i++){
@@ -194,16 +154,11 @@ static cv::Mat canny_impl(cv::Mat *pic){
     }
     low_th=ThresholdRatio*high_th;
 
-
-
-
-
     //non maximum supression + interpolation
     cv::Mat non_ms=cv::Mat::zeros(pic->rows, pic->cols, CV_8U);
     cv::Mat non_ms_hth=cv::Mat::zeros(pic->rows, pic->cols, CV_8U);
 
-
-    float ix,iy, grad1, grad2, d;
+    float ix,iy;
 
     char *p_non_ms,*p_non_ms_hth;
     float * p_res_t, *p_res_b;
@@ -211,102 +166,57 @@ static cv::Mat canny_impl(cv::Mat *pic){
         p_non_ms=non_ms.ptr<char>(i);
         p_non_ms_hth=non_ms_hth.ptr<char>(i);
 
-        p_res=res.ptr<float>(i);
+        g=res.ptr<float>(i);
         p_res_t=res.ptr<float>(i-1);
         p_res_b=res.ptr<float>(i+1);
 
-        p_x=res_x.ptr<float>(i);
-        p_y=res_y.ptr<float>(i);
-
+        p_x=g_x.ptr<float>(i);
+        p_y=g_y.ptr<float>(i);
 
         for(int j=1; j<res.cols-1; j++){
+            iy=p_y[j];
+            ix=p_x[j];
 
+            float grad1, grad2, d;
 
-                iy=p_y[j];
-                ix=p_x[j];
+            bool inDeg = true;
+            if( (iy<=0 && ix>-iy) || (iy>=0 && ix<-iy) ){
+                d=abs(iy/ix);
+                grad1=( g[j+1]*(1-d) ) + ( p_res_t[j+1]*d );
+                grad2=( g[j-1]*(1-d) ) + ( p_res_b[j-1]*d );
+            } else if( (ix>0 && -iy>=ix)  || (ix<0 && -iy<=ix) ){
+                d=abs(ix/iy);
+                grad1=( p_res_t[j]*(1-d) ) + ( p_res_t[j+1]*d );
+                grad2=( p_res_b[j]*(1-d) ) + ( p_res_b[j-1]*d );
+            } else if( (ix<=0 && ix>iy) || (ix>=0 && ix<iy) ){
+                d=abs(ix/iy);
+                grad1=( p_res_t[j]*(1-d) ) + ( p_res_t[j-1]*d );
+                grad2=( p_res_b[j]*(1-d) ) + ( p_res_b[j+1]*d );
+            } else if( (iy<0 && ix<=iy) || (iy>0 && ix>=iy)){
+                d=abs(iy/ix);
+                grad1=( g[j-1]*(1-d) ) + ( p_res_t[j-1]*d );
+                grad2=( g[j+1]*(1-d) ) + ( p_res_b[j+1]*d );
+            } else {
+                inDeg = false;
+            }
 
-                if( (iy<=0 && ix>-iy) || (iy>=0 && ix<-iy) ){
+            if(inDeg && (g[j]>=grad1 && g[j]>=grad2)){
+                p_non_ms[j]= (char) 255;
+                if(g[j]>high_th)
+                    p_non_ms_hth[j]= (char) 255;
+            }
+        }
+    }
 
-
-                    d=abs(iy/ix);
-                    grad1=( p_res[j+1]*(1-d) ) + ( p_res_t[j+1]*d );
-                    grad2=( p_res[j-1]*(1-d) ) + ( p_res_b[j-1]*d );
-
-                    if(p_res[j]>=grad1 && p_res[j]>=grad2){
-                        p_non_ms[j]= (char) 255;
-
-                        if(p_res[j]>high_th)
-                            p_non_ms_hth[j]= (char) 255;
-                    }
-                }
-
-
-
-
-
-                if( (ix>0 && -iy>=ix)  || (ix<0 && -iy<=ix) ){
-                    d=abs(ix/iy);
-                    grad1=( p_res_t[j]*(1-d) ) + ( p_res_t[j+1]*d );
-                    grad2=( p_res_b[j]*(1-d) ) + ( p_res_b[j-1]*d );
-
-                    if(p_res[j]>=grad1 && p_res[j]>=grad2){
-                        p_non_ms[j]= (char) 255;
-                        if(p_res[j]>high_th)
-                            p_non_ms_hth[j]= (char) 255;
-                    }
-                }
-
-
-
-                if( (ix<=0 && ix>iy) || (ix>=0 && ix<iy) ){
-                    d=abs(ix/iy);
-                    grad1=( p_res_t[j]*(1-d) ) + ( p_res_t[j-1]*d );
-                    grad2=( p_res_b[j]*(1-d) ) + ( p_res_b[j+1]*d );
-
-                    if(p_res[j]>=grad1 && p_res[j]>=grad2){
-                        p_non_ms[j]= (char) 255;
-                        if(p_res[j]>high_th)
-                            p_non_ms_hth[j]= (char) 255;
-                    }
-                }
-
-
-
-                if( (iy<0 && ix<=iy) || (iy>0 && ix>=iy)){
-                    d=abs(iy/ix);
-                    grad1=( p_res[j-1]*(1-d) ) + ( p_res_t[j-1]*d );
-                    grad2=( p_res[j+1]*(1-d) ) + ( p_res_b[j+1]*d );
-
-                    if(p_res[j]>=grad1 && p_res[j]>=grad2){
-                        p_non_ms[j]= (char) 255;
-                        if(p_res[j]>high_th)
-                            p_non_ms_hth[j]= (char) 255;
-                    }
-                }
-
-        }}
-
-
-
-
-
-
+    //This should in theory trace the edges with hysteresis
     ////bw select
     cv::Mat res_lin=cv::Mat::zeros(pic->rows, pic->cols, CV_8U);
-    matlab_bwselect(&non_ms_hth, &non_ms,&res_lin);
-
-
-
+    matlab_bwselect(&non_ms_hth, &non_ms, &res_lin);
 
     pic->convertTo(*pic, CV_8U);
 
-
     return res_lin;
-
 }
-
-
-
 
 static bool peek(cv::Mat *pic, double *stddev, int start_x, int end_x, int start_y, int end_y, int peek_detector_factor, int bright_region_th){
     int gray_hist[256];
@@ -342,7 +252,7 @@ static bool peek(cv::Mat *pic, double *stddev, int start_x, int end_x, int start
         for(int j=start_y; j<end_y; j++){
             int idx=(int)pic->data[(pic->cols*j)+i];
 
-                std_feld[i]+=(mean_feld[i]-idx)*(mean_feld[i]-idx);
+            std_feld[i]+=(mean_feld[i]-idx)*(mean_feld[i]-idx);
 
         }
 
@@ -355,11 +265,6 @@ static bool peek(cv::Mat *pic, double *stddev, int start_x, int end_x, int start
     }
 
     *stddev=*stddev/((end_x-start_x));
-
-
-
-
-
 
     for(int i=0; i<256; i++)
         if(gray_hist[i]>0){
@@ -388,23 +293,23 @@ static void remove_points_with_low_angle(cv::Mat *edge, int start_xx, int end_xx
 
 
 
-        int start_x=start_xx+5;
-        int end_x=end_xx-5;
-        int start_y=start_yy+5;
-        int end_y=end_yy-5;
+    int start_x=start_xx+5;
+    int end_x=end_xx-5;
+    int start_y=start_yy+5;
+    int end_y=end_yy-5;
 
 
-        if(start_x<5) start_x=5;
-        if(end_x>edge->cols-5) end_x=edge->cols-5;
-        if(start_y<5) start_y=5;
-        if(end_y>edge->rows-5) end_y=edge->rows-5;
+    if(start_x<5) start_x=5;
+    if(end_x>edge->cols-5) end_x=edge->cols-5;
+    if(start_y<5) start_y=5;
+    if(end_y>edge->rows-5) end_y=edge->rows-5;
 
 
-//cv::imshow("start",*edge);
+    //cv::imshow("start",*edge);
 
 
 
-        for(int j=start_y; j<end_y; j++)
+    for(int j=start_y; j<end_y; j++)
         for(int i=start_x; i<end_x; i++){
 
 
@@ -435,10 +340,10 @@ static void remove_points_with_low_angle(cv::Mat *edge, int start_xx, int end_xx
 
 
 
-//cv::imshow("angle",*edge);
+    //cv::imshow("angle",*edge);
 
 
-        for(int j=start_y; j<end_y; j++)
+    for(int j=start_y; j<end_y; j++)
         for(int i=start_x; i<end_x; i++){
             int box[9];
 
@@ -462,9 +367,9 @@ static void remove_points_with_low_angle(cv::Mat *edge, int start_xx, int end_xx
             }
         }
 
-//cv::imshow("morph1",*edge);
+    //cv::imshow("morph1",*edge);
 
-        for(int j=start_y; j<end_y; j++)
+    for(int j=start_y; j<end_y; j++)
         for(int i=start_x; i<end_x; i++){
             int box[17];
 
@@ -499,47 +404,47 @@ static void remove_points_with_low_angle(cv::Mat *edge, int start_xx, int end_xx
 
 
                 if( (box[10] && !box[7]) && (box[8] || box[6]) ){
-                        edge->data[(edge->cols*(j+1))+(i-1)]=0;
-                        edge->data[(edge->cols*(j+1))+(i+1)]=0;
-                        edge->data[(edge->cols*(j+1))+(i)]=255;
+                    edge->data[(edge->cols*(j+1))+(i-1)]=0;
+                    edge->data[(edge->cols*(j+1))+(i+1)]=0;
+                    edge->data[(edge->cols*(j+1))+(i)]=255;
                 }
 
 
                 if( (box[14] && !box[7] && !box[10]) && ( (box[8] || box[6]) && (box[16] || box[15]) ) ){
-                        edge->data[(edge->cols*(j+1))+(i+1)]=0;
-                        edge->data[(edge->cols*(j+1))+(i-1)]=0;
-                        edge->data[(edge->cols*(j+2))+(i+1)]=0;
-                        edge->data[(edge->cols*(j+2))+(i-1)]=0;
-                        edge->data[(edge->cols*(j+1))+(i)]=255;
-                        edge->data[(edge->cols*(j+2))+(i)]=255;
+                    edge->data[(edge->cols*(j+1))+(i+1)]=0;
+                    edge->data[(edge->cols*(j+1))+(i-1)]=0;
+                    edge->data[(edge->cols*(j+2))+(i+1)]=0;
+                    edge->data[(edge->cols*(j+2))+(i-1)]=0;
+                    edge->data[(edge->cols*(j+1))+(i)]=255;
+                    edge->data[(edge->cols*(j+2))+(i)]=255;
                 }
 
 
 
                 if( (box[9] && !box[5]) && (box[8] || box[2]) ){
-                        edge->data[(edge->cols*(j+1))+(i+1)]=0;
-                        edge->data[(edge->cols*(j-1))+(i+1)]=0;
-                        edge->data[(edge->cols*(j))+(i+1)]=255;
+                    edge->data[(edge->cols*(j+1))+(i+1)]=0;
+                    edge->data[(edge->cols*(j-1))+(i+1)]=0;
+                    edge->data[(edge->cols*(j))+(i+1)]=255;
                 }
 
 
                 if( (box[11] && !box[5] && !box[9]) && ( (box[8] || box[2]) && (box[13] || box[12]) ) ){
-                        edge->data[(edge->cols*(j+1))+(i+1)]=0;
-                        edge->data[(edge->cols*(j-1))+(i+1)]=0;
-                        edge->data[(edge->cols*(j+1))+(i+2)]=0;
-                        edge->data[(edge->cols*(j-1))+(i+2)]=0;
-                        edge->data[(edge->cols*(j))+(i+1)]=255;
-                        edge->data[(edge->cols*(j))+(i+2)]=255;
+                    edge->data[(edge->cols*(j+1))+(i+1)]=0;
+                    edge->data[(edge->cols*(j-1))+(i+1)]=0;
+                    edge->data[(edge->cols*(j+1))+(i+2)]=0;
+                    edge->data[(edge->cols*(j-1))+(i+2)]=0;
+                    edge->data[(edge->cols*(j))+(i+1)]=255;
+                    edge->data[(edge->cols*(j))+(i+2)]=255;
                 }
 
 
             }
         }
 
-//cv::imshow("morph2",*edge);
+    //cv::imshow("morph2",*edge);
 
 
-        for(int j=start_y; j<end_y; j++)
+    for(int j=start_y; j<end_y; j++)
         for(int i=start_x; i<end_x; i++){
 
             int box[33];
@@ -592,38 +497,38 @@ static void remove_points_with_low_angle(cv::Mat *edge, int start_xx, int end_xx
 
 
                 if( box[7] && box[2] && box[9] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[7] && box[0] && box[10] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[1] && box[8] && box[11] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[1] && box[6] && box[12] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
 
                 if( box[0] && box[13] && box[17] && box[8] && box[11] && box[21] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[2] && box[14] && box[18] && box[6] && box[12] && box[22] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[6] && box[15] && box[19] && box[2] && box[9] && box[23] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[8] && box[16] && box[20] && box[0] && box[10] && box[24] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
 
                 if( box[0] && box[25] && box[29] && box[2] && box[27] && box[31] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[0] && box[25] && box[29] && box[6] && box[28] && box[32] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[8] && box[26] && box[30] && box[2] && box[27] && box[31] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
                 if( box[8] && box[26] && box[30] && box[6] && box[28] && box[32] )
-                        edge->data[(edge->cols*(j))+(i)]=0;
+                    edge->data[(edge->cols*(j))+(i)]=0;
 
             }
 
         }
 
 
-//cv::imshow("morph3",*edge);
+    //cv::imshow("morph3",*edge);
 }
 
 #define IMG_SIZE 680 //400
@@ -685,17 +590,17 @@ static std::vector<std::vector<cv::Point>> get_curves(cv::Mat *pic, cv::Mat *edg
                         for(int k2=-1;k2<2;k2++){
 
                             if(akt_pos.x+k1>=start_x && akt_pos.x+k1<end_x && akt_pos.y+k2>=start_y && akt_pos.y+k2<end_y)
-                            if(!check[akt_pos.x+k1][akt_pos.y+k2] )
-                                if( edge->data[(edge->cols*(akt_pos.y+k2))+(akt_pos.x+k1)]==255){
-                                check[akt_pos.x+k1][akt_pos.y+k2]=1;
+                                if(!check[akt_pos.x+k1][akt_pos.y+k2] )
+                                    if( edge->data[(edge->cols*(akt_pos.y+k2))+(akt_pos.x+k1)]==255){
+                                        check[akt_pos.x+k1][akt_pos.y+k2]=1;
 
-                                mean_p.x+=akt_pos.x+k1;
-                                mean_p.y+=akt_pos.y+k2;
-                                curve.push_back(cv::Point(akt_pos.x+k1,akt_pos.y+k2));
-                                curve_idx++;
-                            }
+                                        mean_p.x+=akt_pos.x+k1;
+                                        mean_p.y+=akt_pos.y+k2;
+                                        curve.push_back(cv::Point(akt_pos.x+k1,akt_pos.y+k2));
+                                        curve_idx++;
+                                    }
 
-                    }
+                        }
                     akt_idx++;
 
                 }
@@ -705,106 +610,106 @@ static std::vector<std::vector<cv::Point>> get_curves(cv::Mat *pic, cv::Mat *edg
 
 
                 if(curve_idx>0 && curve.size()>0){
-                add_curve=true;
-                mean_p.x=floor(( double(mean_p.x)/double(curve_idx) )+0.5);
-                mean_p.y=floor(( double(mean_p.y)/double(curve_idx) )+0.5);
-                for(int i=0;i<curve.size();i++)
-                    if(  abs(mean_p.x-curve[i].x)<= mean_dist && abs(mean_p.y-curve[i].y) <= mean_dist)
-                        add_curve=false;
+                    add_curve=true;
+                    mean_p.x=floor(( double(mean_p.x)/double(curve_idx) )+0.5);
+                    mean_p.y=floor(( double(mean_p.y)/double(curve_idx) )+0.5);
+                    for(int i=0;i<curve.size();i++)
+                        if(  abs(mean_p.x-curve[i].x)<= mean_dist && abs(mean_p.y-curve[i].y) <= mean_dist)
+                            add_curve=false;
 
 
-                //is ellipse fit possible
-                if(add_curve){
-                    cv::RotatedRect ellipse=cv::fitEllipse( cv::Mat(curve) );
+                    //is ellipse fit possible
+                    if(add_curve){
+                        cv::RotatedRect ellipse=cv::fitEllipse( cv::Mat(curve) );
 
-                    if(ellipse.center.x<0 || ellipse.center.y<0 ||
-                        ellipse.center.x>pic->cols || ellipse.center.y>pic->rows){
+                        if(ellipse.center.x<0 || ellipse.center.y<0 ||
+                                ellipse.center.x>pic->cols || ellipse.center.y>pic->rows){
 
-                        add_curve=false;
-                    }
-
-                    if(ellipse.size.height > 2.0*ellipse.size.width ||
-                        ellipse.size.width > 2.0*ellipse.size.height){
-
-                        add_curve=false;
-                    }
-
-                }
-
-
-
-
-
-                if(add_curve) {
-
-//std::cout<<"in"<<mean_p.x<<":"<<mean_p.y<<std::endl;
-                    if(inner_color_range>0){
-                        mean_inner_gray=0;
-                        //calc inner mean
-                        for(int i=0;i<curve.size();i++){
-
-                            if(pic->data[(pic->cols*(curve[i].y+1))+(curve[i].x)]!=0 || pic->data[(pic->cols*(curve[i].y-1))+(curve[i].x)]!=0 )
-                                if( sqrt( pow(double(curve[i].y-mean_p.y),2) + pow(double(curve[i].x-mean_p.x)+2,2)) <
-                                    sqrt( pow(double(curve[i].y-mean_p.y),2) + pow(double(curve[i].x-mean_p.x)-2,2)) )
-
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y))+(curve[i].x + 2)];
-                                else
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y))+(curve[i].x - 2)];
-
-
-                            else if(pic->data[(pic->cols*(curve[i].y))+(curve[i].x+1)]!=0 || pic->data[(pic->cols*(curve[i].y))+(curve[i].x-1)]!=0 )
-                                if( sqrt( pow(double(curve[i].y-mean_p.y+2),2) + pow(double(curve[i].x-mean_p.x),2)) <
-                                    sqrt( pow(double(curve[i].y-mean_p.y-2),2) + pow(double(curve[i].x-mean_p.x),2)) )
-
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y+2))+(curve[i].x)];
-                                else
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y-2))+(curve[i].x)];
-
-
-                            else if(pic->data[(pic->cols*(curve[i].y+1))+(curve[i].x+1)]!=0 || pic->data[(pic->cols*(curve[i].y-1))+(curve[i].x-1)]!=0 )
-                                if( sqrt( pow(double(curve[i].y-mean_p.y-2),2) + pow(double(curve[i].x-mean_p.x+2),2)) <
-                                    sqrt( pow(double(curve[i].y-mean_p.y+2),2) + pow(double(curve[i].x-mean_p.x-2),2)) )
-
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y-2))+(curve[i].x+2)];
-                                else
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y+2))+(curve[i].x-2)];
-
-
-                            else if(pic->data[(pic->cols*(curve[i].y-1))+(curve[i].x+1)]!=0 || pic->data[(pic->cols*(curve[i].y+1))+(curve[i].x-1)]!=0 )
-                                if( sqrt( pow(double(curve[i].y-mean_p.y+2),2) + pow(double(curve[i].x-mean_p.x+2),2)) <
-                                    sqrt( pow(double(curve[i].y-mean_p.y-2),2) + pow(double(curve[i].x-mean_p.x-2),2)) )
-
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y+2))+(curve[i].x+2)];
-                                else
-                                    mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y-2))+(curve[i].x-2)];
-
-
-
-
-                            //mean_inner_gray+=pic->data[( pic->cols*( curve[i].y+((mean_p.y-curve[i].y)/2) ) ) + ( curve[i].x+((mean_p.x-curve[i].x)/2) )];
-
-
+                            add_curve=false;
                         }
-                        mean_inner_gray=floor(( double(mean_inner_gray)/double(curve.size()) )+0.5);
 
-                        if(mean_inner_gray_last>(mean_inner_gray+inner_color_range)){
-                            mean_inner_gray_last=mean_inner_gray;
-                            all_curves.clear();
-                            all_curves.push_back(curve);
-                        }else if(mean_inner_gray_last<=(mean_inner_gray+inner_color_range) && mean_inner_gray_last>=(mean_inner_gray-inner_color_range)){
+                        if(ellipse.size.height > 2.0*ellipse.size.width ||
+                                ellipse.size.width > 2.0*ellipse.size.height){
 
-                            if(curve.size()>all_curves[0].size()){
+                            add_curve=false;
+                        }
+
+                    }
+
+
+
+
+
+                    if(add_curve) {
+
+                        //std::cout<<"in"<<mean_p.x<<":"<<mean_p.y<<std::endl;
+                        if(inner_color_range>0){
+                            mean_inner_gray=0;
+                            //calc inner mean
+                            for(int i=0;i<curve.size();i++){
+
+                                if(pic->data[(pic->cols*(curve[i].y+1))+(curve[i].x)]!=0 || pic->data[(pic->cols*(curve[i].y-1))+(curve[i].x)]!=0 )
+                                    if( sqrt( pow(double(curve[i].y-mean_p.y),2) + pow(double(curve[i].x-mean_p.x)+2,2)) <
+                                            sqrt( pow(double(curve[i].y-mean_p.y),2) + pow(double(curve[i].x-mean_p.x)-2,2)) )
+
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y))+(curve[i].x + 2)];
+                                    else
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y))+(curve[i].x - 2)];
+
+
+                                else if(pic->data[(pic->cols*(curve[i].y))+(curve[i].x+1)]!=0 || pic->data[(pic->cols*(curve[i].y))+(curve[i].x-1)]!=0 )
+                                    if( sqrt( pow(double(curve[i].y-mean_p.y+2),2) + pow(double(curve[i].x-mean_p.x),2)) <
+                                            sqrt( pow(double(curve[i].y-mean_p.y-2),2) + pow(double(curve[i].x-mean_p.x),2)) )
+
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y+2))+(curve[i].x)];
+                                    else
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y-2))+(curve[i].x)];
+
+
+                                else if(pic->data[(pic->cols*(curve[i].y+1))+(curve[i].x+1)]!=0 || pic->data[(pic->cols*(curve[i].y-1))+(curve[i].x-1)]!=0 )
+                                    if( sqrt( pow(double(curve[i].y-mean_p.y-2),2) + pow(double(curve[i].x-mean_p.x+2),2)) <
+                                            sqrt( pow(double(curve[i].y-mean_p.y+2),2) + pow(double(curve[i].x-mean_p.x-2),2)) )
+
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y-2))+(curve[i].x+2)];
+                                    else
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y+2))+(curve[i].x-2)];
+
+
+                                else if(pic->data[(pic->cols*(curve[i].y-1))+(curve[i].x+1)]!=0 || pic->data[(pic->cols*(curve[i].y+1))+(curve[i].x-1)]!=0 )
+                                    if( sqrt( pow(double(curve[i].y-mean_p.y+2),2) + pow(double(curve[i].x-mean_p.x+2),2)) <
+                                            sqrt( pow(double(curve[i].y-mean_p.y-2),2) + pow(double(curve[i].x-mean_p.x-2),2)) )
+
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y+2))+(curve[i].x+2)];
+                                    else
+                                        mean_inner_gray+=(unsigned char)pic->data[(pic->cols*(curve[i].y-2))+(curve[i].x-2)];
+
+
+
+
+                                //mean_inner_gray+=pic->data[( pic->cols*( curve[i].y+((mean_p.y-curve[i].y)/2) ) ) + ( curve[i].x+((mean_p.x-curve[i].x)/2) )];
+
+
+                            }
+                            mean_inner_gray=floor(( double(mean_inner_gray)/double(curve.size()) )+0.5);
+
+                            if(mean_inner_gray_last>(mean_inner_gray+inner_color_range)){
                                 mean_inner_gray_last=mean_inner_gray;
                                 all_curves.clear();
                                 all_curves.push_back(curve);
+                            }else if(mean_inner_gray_last<=(mean_inner_gray+inner_color_range) && mean_inner_gray_last>=(mean_inner_gray-inner_color_range)){
+
+                                if(curve.size()>all_curves[0].size()){
+                                    mean_inner_gray_last=mean_inner_gray;
+                                    all_curves.clear();
+                                    all_curves.push_back(curve);
+                                }
                             }
                         }
+                        else
+                            all_curves.push_back(curve);
+
+
                     }
-                    else
-                        all_curves.push_back(curve);
-
-
-                }
 
 
                 }
@@ -819,7 +724,7 @@ static std::vector<std::vector<cv::Point>> get_curves(cv::Mat *pic, cv::Mat *edg
         }
 
 
-        /*
+    /*
         std::cout<<all_curves.size()<<std::endl;
 
         for(int i=0;i<1;i++)
@@ -837,7 +742,7 @@ static std::vector<std::vector<cv::Point>> get_curves(cv::Mat *pic, cv::Mat *edg
         */
 
 
-        return all_curves;
+    return all_curves;
 }
 
 static cv::RotatedRect find_best_edge(cv::Mat *pic,cv::Mat *edge, int start_x, int end_x, int start_y, int end_y, double mean_dist, int inner_color_range){
@@ -976,14 +881,14 @@ static cv::Point th_angular_histo(cv::Mat *pic, cv::Mat *pic_th, int start_x, in
 
                 if(j>=0 && j<DEF_SIZE && i>=0 && i<DEF_SIZE && idx_lb>=0 && idx_lb<DEF_SIZE && idx_br>=0 && idx_br<DEF_SIZE){
 
-                if(++hist_l[j]>max_l) max_l=hist_l[j];
+                    if(++hist_l[j]>max_l) max_l=hist_l[j];
 
-                if(++hist_b[i]>max_b) max_b=hist_b[i];
+                    if(++hist_b[i]>max_b) max_b=hist_b[i];
 
 
-                if(++hist_lb[idx_lb]>max_lb) max_lb=hist_lb[idx_lb];
+                    if(++hist_lb[idx_lb]>max_lb) max_lb=hist_lb[idx_lb];
 
-                if(++hist_br[idx_br]>max_br) max_br=hist_br[idx_br];
+                    if(++hist_br[idx_br]>max_br) max_br=hist_br[idx_br];
 
                 }
             }
@@ -1056,10 +961,10 @@ static void grow_region(cv::RotatedRect *ellipse, cv::Mat *pic){
     int maxi=0;
 
 
-        for(int i=-2;i<3;i++)
-            for(int j=-2;j<3;j++){
+    for(int i=-2;i<3;i++)
+        for(int j=-2;j<3;j++){
 
-                if(y0+j>0 && y0+j<pic->rows && x0+i>0 && x0+i<pic->cols){
+            if(y0+j>0 && y0+j<pic->rows && x0+i>0 && x0+i<pic->cols){
                 if(mini>pic->data[(pic->cols*(y0+j))+(x0+i)])
                     mini=pic->data[(pic->cols*(y0+j))+(x0+i)];
 
@@ -1067,86 +972,86 @@ static void grow_region(cv::RotatedRect *ellipse, cv::Mat *pic){
                     maxi=pic->data[(pic->cols*(y0+j))+(x0+i)];
 
                 mean+=pic->data[(pic->cols*(y0+j))+(x0+i)];
-                }
-
             }
-
-        mean=mean/25.0;
-
-        float diff=abs(mean-pic->data[(pic->cols*(y0))+(x0)]);
-
-        int th_up=ceil(mean+diff)+1;
-        int th_down=floor(mean-diff)-1;
-
-        int radi=0;
-
-        for(int i=1;i<MAX_RADI;i++){
-            radi=i;
-
-            int left=0;
-            int right=0;
-            int top=0;
-            int bottom=0;
-
-            for(int j=-i;j<=1+(i*2);j++){
-
-
-                //left
-                if(y0+j>0 && y0+j<pic->rows && x0+i>0 && x0+i<pic->cols)
-                if(pic->data[(pic->cols*(y0+j))+(x0+i)]>th_down && pic->data[(pic->cols*(y0+j))+(x0+i)]<th_up){
-                    left++;
-//pic->data[(pic->cols*(y0+j))+(x0+i)]=255;
-                }
-
-                //right
-                if(y0+j>0 && y0+j<pic->rows && x0-i>0 && x0-i<pic->cols)
-                if(pic->data[(pic->cols*(y0+j))+(x0-i)]>th_down && pic->data[(pic->cols*(y0+j))+(x0-i)]<th_up){
-                    right++;
-//pic->data[(pic->cols*(y0+j))+(x0-i)]=255;
-                }
-
-                //top
-                if(y0-i>0 && y0-i<pic->rows && x0+j>0 && x0+j<pic->cols)
-                if(pic->data[(pic->cols*(y0-i))+(x0+j)]>th_down && pic->data[(pic->cols*(y0-i))+(x0+j)]<th_up){
-                    top++;
-//pic->data[(pic->cols*(y0-i))+(x0+j)]=255;
-                }
-
-                //bottom
-                if(y0+i>0 && y0+i<pic->rows && x0+j>0 && x0+j<pic->cols)
-                if(pic->data[(pic->cols*(y0+i))+(x0+j)]>th_down && pic->data[(pic->cols*(y0+i))+(x0+j)]<th_up){
-                    bottom++;
-//pic->data[(pic->cols*(y0+i))+(x0+j)]=255;
-                }
-
-            }
-
-
-
-            //if less than 25% stop
-            float p_left=float(left)/float(1+(2*i));
-            float p_right=float(right)/float(1+(2*i));
-            float p_top=float(top)/float(1+(2*i));
-            float p_bottom=float(bottom)/float(1+(2*i));
-
-
-            if(p_top<0.2 && p_bottom<0.2)
-                break;
-
-            if(p_left<0.2 && p_right<0.2)
-                break;
 
         }
 
-        ellipse->size.height=radi;
-        ellipse->size.width=radi;
+    mean=mean/25.0;
+
+    float diff=abs(mean-pic->data[(pic->cols*(y0))+(x0)]);
+
+    int th_up=ceil(mean+diff)+1;
+    int th_down=floor(mean-diff)-1;
+
+    int radi=0;
+
+    for(int i=1;i<MAX_RADI;i++){
+        radi=i;
+
+        int left=0;
+        int right=0;
+        int top=0;
+        int bottom=0;
+
+        for(int j=-i;j<=1+(i*2);j++){
+
+
+            //left
+            if(y0+j>0 && y0+j<pic->rows && x0+i>0 && x0+i<pic->cols)
+                if(pic->data[(pic->cols*(y0+j))+(x0+i)]>th_down && pic->data[(pic->cols*(y0+j))+(x0+i)]<th_up){
+                    left++;
+                    //pic->data[(pic->cols*(y0+j))+(x0+i)]=255;
+                }
+
+            //right
+            if(y0+j>0 && y0+j<pic->rows && x0-i>0 && x0-i<pic->cols)
+                if(pic->data[(pic->cols*(y0+j))+(x0-i)]>th_down && pic->data[(pic->cols*(y0+j))+(x0-i)]<th_up){
+                    right++;
+                    //pic->data[(pic->cols*(y0+j))+(x0-i)]=255;
+                }
+
+            //top
+            if(y0-i>0 && y0-i<pic->rows && x0+j>0 && x0+j<pic->cols)
+                if(pic->data[(pic->cols*(y0-i))+(x0+j)]>th_down && pic->data[(pic->cols*(y0-i))+(x0+j)]<th_up){
+                    top++;
+                    //pic->data[(pic->cols*(y0-i))+(x0+j)]=255;
+                }
+
+            //bottom
+            if(y0+i>0 && y0+i<pic->rows && x0+j>0 && x0+j<pic->cols)
+                if(pic->data[(pic->cols*(y0+i))+(x0+j)]>th_down && pic->data[(pic->cols*(y0+i))+(x0+j)]<th_up){
+                    bottom++;
+                    //pic->data[(pic->cols*(y0+i))+(x0+j)]=255;
+                }
+
+        }
+
+
+
+        //if less than 25% stop
+        float p_left=float(left)/float(1+(2*i));
+        float p_right=float(right)/float(1+(2*i));
+        float p_top=float(top)/float(1+(2*i));
+        float p_bottom=float(bottom)/float(1+(2*i));
+
+
+        if(p_top<0.2 && p_bottom<0.2)
+            break;
+
+        if(p_left<0.2 && p_right<0.2)
+            break;
+
+    }
+
+    ellipse->size.height=radi;
+    ellipse->size.width=radi;
 
 
 
 
-        //////////////////////////////////////////////////
+    //////////////////////////////////////////////////
 
-/*
+    /*
         //collect points in threashold
         cv::Mat ch_mat=cv::Mat::zeros(pic->rows, pic->cols, CV_8UC1);
         cv::Point2i coor;
@@ -1190,7 +1095,7 @@ pic->data[(pic->cols*(ak_p.y))+(ak_p.x)]=255;
 
         }
 */
-        ////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////
 
 
 
@@ -1272,12 +1177,12 @@ static bool is_good_ellipse(cv::RotatedRect *ellipse, cv::Mat *pic, int good_ell
         for(int j=st_y; j<en_y;j++){
 
             if(!(i>=in_st_x && i<=in_en_x && j>=in_st_y && j<=in_en_y))
-            if(i>0 && i<pic->cols && j>0 && j<pic->rows ){
-                ext_val+=pic->data[(pic->cols*j)+i];
-                val_cnt++;
+                if(i>0 && i<pic->cols && j>0 && j<pic->rows ){
+                    ext_val+=pic->data[(pic->cols*j)+i];
+                    val_cnt++;
 
-                //pic->at<char>(j,i)=255;
-            }
+                    //pic->at<char>(j,i)=255;
+                }
         }
 
 
@@ -1320,40 +1225,40 @@ static void rays(cv::Mat *th_edges, int end_x, int end_y, cv::Point *pos, int *r
             if(pos->x-i>0 && pos->x+i<th_edges->cols && pos->y-j>0 && pos->y+j<th_edges->rows){
 
 
-            if((int)th_edges->data[(th_edges->cols*(pos->y))+(pos->x+i)] !=0 && ret[0]==-1){
-                ret[0]=th_edges->data[(th_edges->cols*(pos->y))+(pos->x+i)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x+i<<" y:"<<pos->y<<std::endl;
-            }
-            if((int)th_edges->data[(th_edges->cols*(pos->y))+(pos->x-i)] !=0 && ret[1]==-1){
-                ret[1]=th_edges->data[(th_edges->cols*(pos->y))+(pos->x-i)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x-i<<" y:"<<pos->y<<std::endl;
-            }
-            if((int)th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x)] !=0 && ret[2]==-1){
-                ret[2]=th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x<<" y:"<<pos->y+j<<std::endl;
-            }
-            if((int)th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x)] !=0 && ret[3]==-1){
-                ret[3]=th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x<<" y:"<<pos->y-j<<std::endl;
-            }
+                if((int)th_edges->data[(th_edges->cols*(pos->y))+(pos->x+i)] !=0 && ret[0]==-1){
+                    ret[0]=th_edges->data[(th_edges->cols*(pos->y))+(pos->x+i)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x+i<<" y:"<<pos->y<<std::endl;
+                }
+                if((int)th_edges->data[(th_edges->cols*(pos->y))+(pos->x-i)] !=0 && ret[1]==-1){
+                    ret[1]=th_edges->data[(th_edges->cols*(pos->y))+(pos->x-i)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x-i<<" y:"<<pos->y<<std::endl;
+                }
+                if((int)th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x)] !=0 && ret[2]==-1){
+                    ret[2]=th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x<<" y:"<<pos->y+j<<std::endl;
+                }
+                if((int)th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x)] !=0 && ret[3]==-1){
+                    ret[3]=th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x<<" y:"<<pos->y-j<<std::endl;
+                }
 
 
-            if((int)th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x+i)] !=0 && ret[4]==-1 && i==j){
-                ret[4]=th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x+i)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x+i<<" y:"<<pos->y+j<<std::endl;
-            }
-            if((int)th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x-i)] !=0 && ret[5]==-1 && i==j){
-                ret[5]=th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x-i)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x-i<<" y:"<<pos->y-j<<std::endl;
-            }
-            if((int)th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x+i)] !=0 && ret[6]==-1 && i==j){
-                ret[6]=th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x+i)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x+i<<" y:"<<pos->y-j<<std::endl;
-            }
-            if((int)th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x-i)] !=0 && ret[7]==-1 && i==j){
-                ret[7]=th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x-i)]-1;
-                //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x-i<<" y:"<<pos->y+j<<std::endl;
-            }
+                if((int)th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x+i)] !=0 && ret[4]==-1 && i==j){
+                    ret[4]=th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x+i)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x+i<<" y:"<<pos->y+j<<std::endl;
+                }
+                if((int)th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x-i)] !=0 && ret[5]==-1 && i==j){
+                    ret[5]=th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x-i)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x-i<<" y:"<<pos->y-j<<std::endl;
+                }
+                if((int)th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x+i)] !=0 && ret[6]==-1 && i==j){
+                    ret[6]=th_edges->data[(th_edges->cols*(pos->y-j))+(pos->x+i)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x+i<<" y:"<<pos->y-j<<std::endl;
+                }
+                if((int)th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x-i)] !=0 && ret[7]==-1 && i==j){
+                    ret[7]=th_edges->data[(th_edges->cols*(pos->y+j))+(pos->x-i)]-1;
+                    //std::cout<<"val:"<<ret[0]<<" x:"<<pos->x-i<<" y:"<<pos->y+j<<std::endl;
+                }
 
 
             }
@@ -1397,10 +1302,10 @@ static void zero_around_region_th_border(cv::Mat *pic, cv::Mat *edges, cv::Mat *
                     for(int k2=-edge_to_th; k2<edge_to_th; k2++){
 
                         if(i+k1>=0 && i+k1<pic->cols && j+k2>0 && j+k2<edges->rows)
-                        if((int)edges->data[(edges->cols*(j+k2))+(i+k1)])
-                            th_edges->data[(edges->cols*(j+k2))+(i+k1)]=255;
+                            if((int)edges->data[(edges->cols*(j+k2))+(i+k1)])
+                                th_edges->data[(edges->cols*(j+k2))+(i+k1)]=255;
 
-                }
+                    }
 
             }
 
@@ -1413,11 +1318,11 @@ static void zero_around_region_th_border(cv::Mat *pic, cv::Mat *edges, cv::Mat *
     std::vector<std::vector<cv::Point>> all_curves=get_curves(pic, th_edges, start_x, end_x, start_y, end_y, mean_dist, 0);
 
 
-//std::cout<<"all curves:"<<all_curves.size()<<std::endl;
+    //std::cout<<"all curves:"<<all_curves.size()<<std::endl;
     if(all_curves.size()>0){
 
 
-    //zero th_edges
+        //zero th_edges
         /*
     for(int i=start_x-edge_to_th; i<end_x+edge_to_th; i++)
         for(int j=start_y-edge_to_th; j<end_y+edge_to_th; j++){
@@ -1425,58 +1330,58 @@ static void zero_around_region_th_border(cv::Mat *pic, cv::Mat *edges, cv::Mat *
         }
         */
 
-    for(int i=0; i<th_edges->cols; i++)
-        for(int j=0; j<th_edges->rows; j++){
-            th_edges->data[(th_edges->cols*(j))+(i)]=0;
-        }
+        for(int i=0; i<th_edges->cols; i++)
+            for(int j=0; j<th_edges->rows; j++){
+                th_edges->data[(th_edges->cols*(j))+(i)]=0;
+            }
 
 
-    //draw remaining edges
-    for(int i=0; i<all_curves.size(); i++){
-        //std::cout<<"written:"<<i+1<<std::endl;
-        for(int j=0; j<all_curves[i].size(); j++){
+        //draw remaining edges
+        for(int i=0; i<all_curves.size(); i++){
+            //std::cout<<"written:"<<i+1<<std::endl;
+            for(int j=0; j<all_curves[i].size(); j++){
 
-            if(all_curves[i][j].x>=0 && all_curves[i][j].x<th_edges->cols && all_curves[i][j].y>=0 && all_curves[i][j].y<th_edges->rows)
-            th_edges->data[(th_edges->cols*(all_curves[i][j].y))+(all_curves[i][j].x)]=i+1;//+1 becouse of first is 0
-        }
-    }
-
-
-
-
-
-    cv::Point st_pos;
-    st_pos.x=pos->center.x;
-    st_pos.y=pos->center.y;
-    //send rays add edges to vector
-    rays(th_edges, (end_x-start_x)/2, (end_y-start_y)/2, &st_pos, ret);
-
-    //for(int i=0; i<8; i++) std::cout<<"ret:"<<ret[i]<<std::endl;
-    //cv::imshow("akt", *th_edges);
-    //cv::waitKey(0);
-
-    //gather points
-    for(int i=0; i<8; i++)
-        if(ret[i]>-1 && ret[i]<all_curves.size()){
-            //std::cout<<"size:"<<all_curves.size()<<std::endl;
-            //std::cout<<"idx:"<<ret[i]<<std::endl;
-            for(int j=0; j<all_curves[ret[i]].size(); j++){
-                selected_points.push_back(all_curves[ret[i]][j]);
+                if(all_curves[i][j].x>=0 && all_curves[i][j].x<th_edges->cols && all_curves[i][j].y>=0 && all_curves[i][j].y<th_edges->rows)
+                    th_edges->data[(th_edges->cols*(all_curves[i][j].y))+(all_curves[i][j].x)]=i+1;//+1 becouse of first is 0
             }
         }
-    //ellipse fit if size>5
 
 
 
-    if(selected_points.size()>5){
 
-        *pos=cv::fitEllipse( cv::Mat(selected_points) );
 
-        /*
+        cv::Point st_pos;
+        st_pos.x=pos->center.x;
+        st_pos.y=pos->center.y;
+        //send rays add edges to vector
+        rays(th_edges, (end_x-start_x)/2, (end_y-start_y)/2, &st_pos, ret);
+
+        //for(int i=0; i<8; i++) std::cout<<"ret:"<<ret[i]<<std::endl;
+        //cv::imshow("akt", *th_edges);
+        //cv::waitKey(0);
+
+        //gather points
+        for(int i=0; i<8; i++)
+            if(ret[i]>-1 && ret[i]<all_curves.size()){
+                //std::cout<<"size:"<<all_curves.size()<<std::endl;
+                //std::cout<<"idx:"<<ret[i]<<std::endl;
+                for(int j=0; j<all_curves[ret[i]].size(); j++){
+                    selected_points.push_back(all_curves[ret[i]][j]);
+                }
+            }
+        //ellipse fit if size>5
+
+
+
+        if(selected_points.size()>5){
+
+            *pos=cv::fitEllipse( cv::Mat(selected_points) );
+
+            /*
         cv::ellipse(*pic, cv::RotatedRect(ellipse.operator CvBox2D()),CV_RGB(255,255,255));
         cv::imshow("akt", *pic);
         */
-    }
+        }
 
     }
 
@@ -1524,8 +1429,8 @@ static void optimize_pos(cv::Mat *pic, double area, cv::Point *pos){
                 for(int k2=-reg_size; k2<reg_size; k2++){
 
                     if(i+k1>0 && i+k1<pic->cols && j+k2>0 && j+k2<pic->rows){
-                    val=(pic->data[(pic->cols*j)+(i)]-pic->data[(pic->cols*(j+k2))+(i+k1)]);
-                    if(val>0) min_akt+=val;
+                        val=(pic->data[(pic->cols*j)+(i)]-pic->data[(pic->cols*(j+k2))+(i+k1)]);
+                        if(val>0) min_akt+=val;
                     }
 
                 }
@@ -1635,7 +1540,7 @@ static cv::RotatedRect runexcuse(cv::Mat *pic, cv::Mat *pic_th, cv::Mat *th_edge
 
 
 
-//peek_found=1;
+    //peek_found=1;
     if(peek_found){
         edges_only_tried=true;
         ellipse=find_best_edge(pic, &detected_edges, start_x, end_x, start_y, end_y,mean_dist, inner_color_range);
@@ -1687,22 +1592,22 @@ static cv::RotatedRect runexcuse(cv::Mat *pic, cv::Mat *pic_th, cv::Mat *th_edge
 
 
 
-//if(ellipse.size.height>0 && ellipse.size.width>0.0){
+    //if(ellipse.size.height>0 && ellipse.size.width>0.0){
 
 
-if(is_good_ellipse(&ellipse, pic, good_ellipse_threshold))
-    return ellipse;
-else{
-    ellipse.center.x=0;
-    ellipse.center.y=0;
-    ellipse.angle=0.0;
-    ellipse.size.height=0.0;
-    ellipse.size.width=0.0;
+    if(is_good_ellipse(&ellipse, pic, good_ellipse_threshold))
+        return ellipse;
+    else{
+        ellipse.center.x=0;
+        ellipse.center.y=0;
+        ellipse.angle=0.0;
+        ellipse.size.height=0.0;
+        ellipse.size.width=0.0;
 
-    return ellipse;
-}
+        return ellipse;
+    }
 
-//}
+    //}
 
     return ellipse;
     /*
